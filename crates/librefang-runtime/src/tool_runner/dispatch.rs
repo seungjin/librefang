@@ -1094,6 +1094,10 @@ pub async fn execute_tool_raw(
                 *kernel,
                 *workspace_root,
                 *sender_id,
+                // #6117: thread the turn's channel + conversation id so the
+                // cross-chat dispatch guard can scope its recipient check.
+                *channel,
+                *chat_id,
                 *caller_agent_id,
                 &extra_refs,
             )
