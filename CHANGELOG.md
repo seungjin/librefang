@@ -900,6 +900,11 @@ In-crate only; no cross-crate error-shape changes.
 
 ### Added
 
+- **channels: remove a configured sidecar channel from the dashboard** (#6186) (@houko).
+  Channels could only be added — the only way to remove one was hand-editing `config.toml`.
+  A new `DELETE /api/channels/sidecar/{name}` rewrites `config.toml` under the same lock that gates configure, then hot-reloads so the removed sidecar child is stopped rather than left running until restart.
+  The dashboard configured-channel cards gain a confirm-guarded Trash button wired to a `useRemoveSidecarConfig` mutation; the channel's `secrets.env` keys are deliberately left untouched, since purging secrets is a separate destructive action.
+  Closes #6186.
 - **dashboard(agents): group the Agents list into Core Agents and Hands sections** (#6189) (@houko).
   The Agents page rendered every agent in one flat list, with hand-role agents distinguished only by a small per-row badge.
   The already-filtered and -sorted list is now split on the `is_hand` flag into two titled sections (using the pre-seeded `agents.core_agents` / `agents.hands` i18n keys); each header only shows when its group is non-empty, so the `Show hands` toggle keeps its meaning and a single-group view shows no empty banner.
