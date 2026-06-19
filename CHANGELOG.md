@@ -963,6 +963,11 @@ In-crate only; no cross-crate error-shape changes.
 
 ### Fixed
 
+- **fix(cli): stop the agent-creation wizard from stamping a hidden 200k hourly token cap** (#6206) (@houko).
+  The TUI "create custom agent" wizard hard-coded `[resources] max_llm_tokens_per_hour = 200000` into every generated `agent.toml`, so TUI-created agents silently hit `Resource quota exceeded: Token limit would be exceeded ... > 200000` after a few large-context turns — even though the compiled and global defaults are unlimited.
+  The template now emits `max_llm_tokens_per_hour = 0` (explicitly unlimited, matching every non-TUI agent); operators who want a cap set it via `agent.toml [resources]`, the global `[budget] default_max_llm_tokens_per_hour`, or `PATCH /api/agents/{id}/budget`.
+  Existing agents keep their stored cap — edit the agent's manifest or PATCH its budget to lift it.
+  Closes #6206.
 - **fix(prompts): refuse to delete the active (bound) prompt version** (#6195) (@houko).
   `PromptStore::delete_version` deleted unconditionally, so a direct API/SDK call could delete the version an agent is actively sending, orphaning its live prompt; the dashboard only hid the delete button client-side.
   The store now rejects deleting an active version with `InvalidState` (surfaced as `400`, no longer flattened to `500` by the kernel handle), unknown ids stay an idempotent no-op, and the dashboard renders the active version's delete button disabled with an explanatory tooltip on both the Prompts page and the per-agent Prompts/Experiments modal.
