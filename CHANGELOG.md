@@ -872,6 +872,10 @@ In-crate only; no cross-crate error-shape changes.
 
 ### Added
 
+- **channels: per-instance sidecar secrets so each agent can own its own handle** (#6169) (@houko).
+  Two instances of the same sidecar adapter (e.g. one Matrix account per agent) previously had to share one global secret — a Matrix sidecar's identity is its `MATRIX_ACCESS_TOKEN`, so both logged in as the same account.
+  `build_spawn_env` now resolves a `<NAME>__KEY` entry in `secrets.env` to the bare `KEY` for the matching `[[sidecar_channels]]` instance (name uppercased, non-alphanumerics → `_`); the per-instance value overrides the global bare key and the parent env, and another instance's namespaced secret never leaks into this child.
+  Operators keep tokens in `secrets.env` (not plaintext `config.toml`); without a prefix all instances still share the global secret. Closes #6169.
 - **dashboard: a global Auto-Dream on/off switch on the Memory → Auto-Dream tab** (#6188) (@houko).
   The tab previously showed only a read-only status badge and told users to edit `config.toml` to flip the master switch; it is now an interactive toggle wired to the existing `POST /api/config/set` (`auto_dream.enabled` is on the writable allowlist).
   The handler invalidates `autoDreamKeys` in addition to `useSetConfigValue`'s `configKeys` so the badge and the per-agent "Dream now" buttons reflect the new global state immediately rather than after the 15s poll.
