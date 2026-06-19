@@ -974,6 +974,10 @@ In-crate only; no cross-crate error-shape changes.
 
 ### Fixed
 
+- **fix(dashboard): serve the SPA shell on a hard refresh of the Prompts and Tasks pages** (#6197) (@houko).
+  `/dashboard/prompts` and `/dashboard/tasks` are real router routes, but they were never added to the server-side `SPA_ROUTES` allowlist, so a direct navigation or browser refresh returned `asset not found` (404) instead of `index.html`.
+  Both slugs are added to the allowlist, and a drift-guard test now parses `router.tsx` and asserts every top-level dashboard route falls back to the shell, so a future route added without updating the allowlist fails loudly.
+  Closes #6197.
 - **fix(api): scope the compaction-summary banner to the session that was actually compacted** (#6225) (@houko).
   The dashboard "Session summary (older messages compacted)" banner appeared on a freshly created session that was never compacted, showing a previous unrelated conversation's summary.
   `compacted_summary` lives in the agent-scoped `canonical_sessions` row (one per `agent_id`) and outlives any individual session, but `get_agent_session` exposed it whenever the requested session was the agent's *active* one — so creating a new session, which makes it active without compacting it, leaked the prior summary onto message #1.
