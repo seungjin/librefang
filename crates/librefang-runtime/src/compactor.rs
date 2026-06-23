@@ -1188,11 +1188,32 @@ fn aggregate_developer_loops(messages: &mut Vec<Message>, max_steps: u32) {
         if steps.len() >= max_steps && steps.len() > 2 {
             let first = steps[0];
             let last = steps[steps.len() - 1];
-            result.push(messages[first.0].clone());
-            result.push(messages[first.1].clone());
             let elided = steps.len() - 2;
             let tools = collect_dev_tool_names(messages, &steps[1..steps.len() - 1]);
-            result.push(developer_loop_placeholder(elided, &tools));
+
+            // Keep the first assistant turn and its matching user result delivery.
+            result.push(messages[first.0].clone());
+            let mut first_user_msg = messages[first.1].clone();
+            // Embed the aggregation notice *inside the first ToolResult's content*
+            // rather than as a standalone User message or a separate trailing
+            // `Text` block. Two constraints force this:
+            //   1. A standalone placeholder would be consecutive with the result
+            //      delivery, and session_repair intentionally skips merging pure
+            //      tool-result deliveries, so Anthropic's API rejects the history
+            //      with "role User cannot follow role User" (#6251).
+            //   2. A trailing `Text` block in the same message survives the
+            //      Anthropic path but is silently dropped by the OpenAI-compatible
+            //      driver: that driver gates emission of accumulated text `parts`
+            //      on `!has_tool_results`, so any `Text` block sharing a message
+            //      with a `ToolResult` never reaches OpenAI / Groq / Moonshot.
+            // Folding the notice into the ToolResult `content` string is the only
+            // form that survives both translation paths (#6251).
+            append_notice_to_first_tool_result(
+                &mut first_user_msg,
+                &developer_loop_placeholder(elided, &tools),
+            );
+            result.push(first_user_msg);
+
             result.push(messages[last.0].clone());
             result.push(messages[last.1].clone());
             i = j;
@@ -1265,21 +1286,54 @@ fn collect_dev_tool_names(messages: &[Message], steps: &[(usize, usize)]) -> Vec
     names.into_iter().collect()
 }
 
-/// `timestamp: None` keeps output byte-stable across runs.
-fn developer_loop_placeholder(elided: usize, tools: &[String]) -> Message {
+/// Returns the notice text describing the elided intermediate developer-loop
+/// steps. The wording is independent of any timestamp so aggregation output is
+/// byte-stable across runs (deterministic-prompt rule, #3298).
+fn developer_loop_placeholder(elided: usize, tools: &[String]) -> String {
     let tool_list = if tools.is_empty() {
         String::new()
     } else {
         format!(" (tools: {})", tools.join(", "))
     };
-    let text = format!(
+    format!(
         "[DEVELOPER LOOP AGGREGATED] {elided} intermediate developer-tool step(s) elided during compaction{tool_list}. The first and last steps are retained for context."
-    );
-    Message {
-        role: Role::User,
-        content: MessageContent::Text(text),
-        pinned: false,
-        timestamp: None,
+    )
+}
+
+/// Fold the aggregation `notice` into the first `ToolResult` block's `content`
+/// string, separated by a blank line. This keeps the notice inside the tool
+/// result so it survives both the Anthropic and the OpenAI-compatible driver
+/// translation paths (a separate `Text` block is dropped by the latter — see
+/// the call site for the full rationale, #6251).
+///
+/// If the message somehow has no `ToolResult` block (it always should, given
+/// the caller only ever passes a tool-result delivery), the notice is appended
+/// as a trailing `Text` block as a best-effort fallback so it is not lost.
+fn append_notice_to_first_tool_result(msg: &mut Message, notice: &str) {
+    if let MessageContent::Blocks(blocks) = &mut msg.content {
+        for block in blocks.iter_mut() {
+            if let ContentBlock::ToolResult { content, .. } = block {
+                if content.is_empty() {
+                    *content = notice.to_string();
+                } else {
+                    content.push_str("\n\n");
+                    content.push_str(notice);
+                }
+                return;
+            }
+        }
+        // Fallback: no ToolResult present — append as a Text block.
+        blocks.push(ContentBlock::Text {
+            text: notice.to_string(),
+            provider_metadata: None,
+        });
+    } else if let MessageContent::Text(text) = &mut msg.content {
+        if text.is_empty() {
+            *text = notice.to_string();
+        } else {
+            text.push_str("\n\n");
+            text.push_str(notice);
+        }
     }
 }
 
@@ -1400,8 +1454,14 @@ mod tests {
     }
 
     fn has_loop_placeholder(msgs: &[Message]) -> bool {
+        // The notice is now folded into a ToolResult's `content` string, but
+        // accept a Text block / Text content too so the helper stays robust.
         msgs.iter().any(|m| {
             matches!(&m.content, MessageContent::Text(t) if t.contains("DEVELOPER LOOP AGGREGATED"))
+                || matches!(&m.content, MessageContent::Blocks(bs) if bs.iter().any(|b| {
+                    matches!(b, ContentBlock::Text { text, .. } if text.contains("DEVELOPER LOOP AGGREGATED"))
+                        || matches!(b, ContentBlock::ToolResult { content, .. } if content.contains("DEVELOPER LOOP AGGREGATED"))
+                }))
         })
     }
 
@@ -1496,8 +1556,9 @@ mod tests {
             msgs.push(tool_result(&format!("t{k}"), "file_write"));
         }
         aggregate_developer_loops(&mut msgs, 2);
-        // first step (2) + placeholder (1) + last step (2) = 5
-        assert_eq!(msgs.len(), 5);
+        // first step (2) + last step (2) = 4; placeholder is embedded in the
+        // first user result delivery to avoid consecutive User messages (#6251).
+        assert_eq!(msgs.len(), 4);
         assert!(has_loop_placeholder(&msgs));
         assert!(
             tool_pairing_intact(&msgs),
@@ -1526,8 +1587,8 @@ mod tests {
             msgs.push(tool_result(&format!("t{k}"), "file_write"));
         }
         aggregate_developer_loops(&mut msgs, 3);
-        // first + placeholder + last = 5
-        assert_eq!(msgs.len(), 5);
+        // first step (2) + last step (2) = 4; placeholder embedded in first result delivery.
+        assert_eq!(msgs.len(), 4);
         assert!(has_loop_placeholder(&msgs));
         assert!(tool_pairing_intact(&msgs));
     }
@@ -1542,6 +1603,41 @@ mod tests {
         aggregate_developer_loops(&mut msgs, 0);
         assert_eq!(msgs.len(), 20);
         assert!(!has_loop_placeholder(&msgs));
+    }
+
+    #[test]
+    fn aggregate_developer_loops_avoids_consecutive_user_messages() {
+        // After aggregation the remaining history must alternate roles.
+        // Embedding the placeholder in the first result delivery prevents the
+        // previous standalone User placeholder from sitting next to another
+        // User message (#6251).
+        let mut msgs = Vec::new();
+        for k in 0..4 {
+            msgs.push(dev_tool_use(&format!("t{k}"), "file_write"));
+            msgs.push(tool_result(&format!("t{k}"), "file_write"));
+        }
+        aggregate_developer_loops(&mut msgs, 2);
+
+        for window in msgs.windows(2) {
+            assert!(
+                !(window[0].role == Role::User && window[1].role == Role::User),
+                "aggregation must not produce consecutive User messages: {:?} -> {:?}",
+                window[0].role,
+                window[1].role
+            );
+        }
+
+        // The placeholder text should live inside the first result delivery,
+        // specifically folded into a ToolResult's `content` (not a separate Text
+        // block — that form is dropped by the OpenAI-compatible driver, #6251).
+        let first_user = &msgs[1];
+        let in_tool_result = matches!(&first_user.content, MessageContent::Blocks(bs) if bs.iter().any(|b| {
+            matches!(b, ContentBlock::ToolResult { content, .. } if content.contains("DEVELOPER LOOP AGGREGATED"))
+        }));
+        assert!(
+            in_tool_result,
+            "placeholder should be folded into the first result delivery's ToolResult content"
+        );
     }
 
     #[test]
