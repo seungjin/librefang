@@ -649,7 +649,7 @@
   "logsPage": {
     "title": "로그",
     "allLevels": "모두",
-    "searchPlaceholder": "찾다...",
+    "searchPlaceholder": "검색...",
     "resume": "재개하다",
     "pause": "정지시키다",
     "clear": "분명한",
@@ -1899,7 +1899,7 @@
     "sessionLevel": "세션 수준",
     "agentLevel": "상담원 수준",
     "searchPlaceholder": "추억 검색...",
-    "search": "찾다",
+    "search": "검색",
     "all": "모두",
     "content": "콘텐츠",
     "level": "수준",
