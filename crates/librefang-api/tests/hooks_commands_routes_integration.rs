@@ -442,18 +442,10 @@ async fn hooks_agent_dispatches_to_default_agent() {
     unsafe {
         std::env::remove_var(env_name);
     }
-    assert!(
-        status == StatusCode::INTERNAL_SERVER_ERROR || status == StatusCode::PRECONDITION_FAILED,
-        "expected LLM dispatch error, got: {status} - body={body:?}"
-    );
-    let err_msg = body["error"]["message"].as_str().unwrap_or("");
-    assert!(
-        err_msg.contains("Webhook agent execution failed")
-            || err_msg.contains("LLM driver error")
-            || err_msg.contains("실패했습니다")
-            || err_msg.contains("Помилка виконання"),
-        "expected LLM dispatch error message in body, got: {body:?}"
-    );
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(body["status"], "completed", "{body:?}");
+    assert!(body["agent_id"].is_string(), "{body:?}");
+    assert!(body["response"].is_string(), "{body:?}");
 }
 
 /// When the caller names an agent that does not exist (and isn't a UUID),
