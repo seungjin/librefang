@@ -33,7 +33,25 @@ struct Harness {
     _test: TestAppState,
 }
 
+static INIT_ENV: std::sync::Once = std::sync::Once::new();
+
 async fn boot() -> Harness {
+    INIT_ENV.call_once(|| {
+        for var in &[
+            "OPENAI_API_KEY",
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+            "GOOGLE_CLOUD_API_KEY",
+            "ELEVENLABS_API_KEY",
+            "MINIMAX_API_KEY",
+            "MINIMAX_CN_API_KEY",
+        ] {
+            unsafe {
+                std::env::remove_var(var);
+            }
+        }
+    });
+
     let test = TestAppState::with_builder(MockKernelBuilder::new().with_config(|cfg| {
         cfg.default_model = librefang_types::config::DefaultModelConfig {
             provider: "ollama".to_string(),
