@@ -34,6 +34,17 @@ struct Harness {
 }
 
 async fn boot() -> Harness {
+    // Ensure no ambient media API keys are present in the test environment to avoid auto-detect resolving them and attempting outbound calls.
+    static CLEAR_ENV: std::sync::Once = std::sync::Once::new();
+    CLEAR_ENV.call_once(|| {
+        std::env::remove_var("OPENAI_API_KEY");
+        std::env::remove_var("GEMINI_API_KEY");
+        std::env::remove_var("GOOGLE_API_KEY");
+        std::env::remove_var("GOOGLE_CLOUD_API_KEY");
+        std::env::remove_var("ELEVENLABS_API_KEY");
+        std::env::remove_var("MINIMAX_API_KEY");
+    });
+
     let test = TestAppState::with_builder(MockKernelBuilder::new().with_config(|cfg| {
         cfg.default_model = librefang_types::config::DefaultModelConfig {
             provider: "ollama".to_string(),
